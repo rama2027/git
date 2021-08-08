@@ -14,7 +14,200 @@
 
     },
     "Resources": {
+      "1vpc": {
+        "Type": "AWS::EC2::VPC",
+        "Properties": {
+          "CidrBlock": "192.168.0.0/16",
+          "Tags": [{ "Key": "1", "Value":  "1" }]
+        }
+      },
+      "subnetName1": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+          "AvailabilityZone": "eu-west-1a",
+          "VpcId": { "Ref": "1vpc" },
+          "CidrBlock": "192.168.0.0/19",
+          "Tags": [{ "Key": "2", "Value":  "2" }]
+        }
+      },
+      "subnetName": {
+        "Type": "AWS::EC2::Subnet",
+        "Properties": {
+          "AvailabilityZone": "eu-west-1b",
+          "VpcId": { "Ref": "1vpc" },
+          "CidrBlock": "192.168.32.0/19",
+          "Tags": [{ "Key": "1", "Value":  "1" }]
+        }
+      },
+      "igwName": {
+        "Type": "AWS::EC2::InternetGateway",
+        "Properties": {
+          "Tags": [{ "Key": "ig", "Value":  "ig" }]
+        }
+      },
+      "AttachGateway": {
+        "Type": "AWS::EC2::VPCGatewayAttachment",
+        "Properties": {
+          "VpcId": { "Ref": "1vpc" },
+          "InternetGatewayId": { "Ref": "igwName" }
+        }
+      },
+      "secGroupName" : {
+        "Type" : "AWS::EC2::SecurityGroup",
+        "Properties" : {
+          "GroupDescription" : "test",
+          "SecurityGroupIngress": [
+              {
+                  "IpProtocol": "tcp",
+                  "FromPort": 3389,
+                  "ToPort": 3389,
+                  "CidrIp": "0.0.0.0/0"
+              },
+              {
+                  "IpProtocol": "tcp",
+                  "FromPort": 8080,
+                  "ToPort": 8080,
+                  "CidrIp": "0.0.0.0/0"
+              },
+              {
+                  "IpProtocol": "tcp",
+                  "FromPort": 21,
+                  "ToPort": 21,
+                  "CidrIp": "0.0.0.0/0"
+              },
+              {
+                  "IpProtocol": "tcp",
+                  "FromPort": 80,
+                  "ToPort": 80,
+                  "CidrIp": "0.0.0.0/0"
+              }
 
+          ],
+          "VpcId" : { "Ref": "1vpc" },
+          "Tags" :  [ { "Key": "1", "Value":  "1" } ]
+        }
+      },
+      "launchConfigName": {
+          "Type" : "AWS::AutoScaling::LaunchConfiguration",
+          "Properties" : {
+              "ImageId" : "ami-0e121e5eb3d3da758",
+              "InstanceType" : "t2.micro",
+              "KeyName" : "linux",
+              "SecurityGroups" : [ { "Ref": "secGroupName" } ],
+              "AssociatePublicIpAddress" : "True",
+              "UserData" : {
+                  "Fn::Base64":
+                      {   "Fn::Join": [
+                              "",
+                              [
+                                  "<powershell>",
+                                  "get-service Termservice \n",
+                                  "stop-service Termservice -f \n",
+                                  "get-service Termservice \n",
+                                  "Start-Sleep -s 220 \n",
+                                  "Install-WindowsFeature -Name RDS-Gateway -Verbose \n",
+                                  "Install-WindowsFeature -Name RDS-RD-Server -Verbose \n",
+                                  "get-service Termservice \n",
+                                  "cfn-signal -e 0 ",
+                                  " --stack ", { "Ref": "AWS::StackName" },
+                                  " --resource auto",
+                                  " --region ", { "Ref" : "AWS::Region" }, "\n",
+                                  "Restart-Computer -f \n",
+                                  "</powershell>"
+                              ]
+
+                          ]
+                      }
+              }
+          }
+      },
+      "auto" : {
+          "Type" : "AWS::AutoScaling::AutoScalingGroup",
+          "Properties" : {
+              "AvailabilityZones" : ["eu-west-1a","eu-west-1b"],
+              "LaunchConfigurationName" : { "Ref": "launchConfigName" },
+              "HealthCheckType" : "ELB",
+              "HealthCheckGracePeriod" : "600",
+              "LoadBalancerNames" : [{ "Ref": "elb" }],
+              "MaxSize" : "1",
+              "MinSize" : "1",
+              "VPCZoneIdentifier" : [{ "Ref": "subnetName" },{ "Ref": "subnetName1" }],
+              "Tags" : [ {"Key" : "Name",
+                          "Value" : "test",
+                          "PropagateAtLaunch" : "True"}
+                      ]
+          },
+          "CreationPolicy": {
+            "AutoScalingCreationPolicy" : {
+              "MinSuccessfulInstancesPercent" : 1
+            },
+            "ResourceSignal": {
+              "Count": "1",
+              "Timeout": "PT30M"
+            }
+          },
+          "UpdatePolicy" : {
+            "AutoScalingReplacingUpdate" : {
+              "WillReplace" : "true"
+            }
+          }
+      },
+      "elb": {
+         "Type": "AWS::ElasticLoadBalancing::LoadBalancer",
+         "Properties": {
+            "Listeners" : [ {
+            "InstancePort": "3389",
+            "InstanceProtocol": "TCP",
+            "LoadBalancerPort": "3389",
+            "Protocol": "TCP"
+              } ],
+            "HealthCheck": {
+              "Target": "TCP:3389",
+              "HealthyThreshold": "5",
+              "UnhealthyThreshold": "2",
+              "Interval": "300",
+              "Timeout": "15"
+            },
+            "LoadBalancerName" : "elb1",
+            "SecurityGroups" : [ { "Ref": "secGroupName" } ],
+            "Subnets" : [{ "Ref": "subnetName1" },{ "Ref": "subnetName" } ],
+            "Tags": [
+                  {
+                    "Key": "lb",
+                    "Value": "lb"
+                  }
+            ]
+         }
+      },
+      "routeTableName": {
+        "Type": "AWS::EC2::RouteTable",
+        "Properties": {
+          "VpcId": { "Ref": "1vpc" },
+          "Tags": [{ "Key": "1", "Value":  "1" }]
+        }
+      },
+      "routeName": {
+        "Type": "AWS::EC2::Route",
+        "Properties": {
+          "RouteTableId": { "Ref": "routeTableName" },
+          "DestinationCidrBlock": "0.0.0.0/0",
+          "GatewayId": { "Ref": "igwName" }
+        }
+      },
+      "routeTableAssocName": {
+        "Type": "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties": {
+          "SubnetId": { "Ref": "subnetName1" },
+          "RouteTableId": { "Ref": "routeTableName" }
+        }
+      },
+      "routeTableAssocName1": {
+        "Type": "AWS::EC2::SubnetRouteTableAssociation",
+        "Properties": {
+          "SubnetId": { "Ref": "subnetName" },
+          "RouteTableId": { "Ref": "routeTableName" }
+        }
+      }
     },
     "Outputs": {
 
